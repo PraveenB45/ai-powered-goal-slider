@@ -916,10 +916,9 @@ export default function Home() {
                             boxShadow: '0 10px 25px rgba(0,0,0,0.1)'
                           }}
                           labelStyle={{ fontWeight: 'bold', color: isDarkMode ? '#f1f5f9' : '#0f172a' }}
-                          formatter={(value: any, name: string) => {
+                          formatter={(value: any, name: string): [string, string] => {
                             const label = name === 'syllabus' ? 'Syllabus Coverage' : 'Expected Marks'
-                            const color = name === 'syllabus' ? '#3b82f6' : '#f97316'
-                            return [`${value}%`, label, { color }]
+                            return [`${value}%`, label]
                           }}
                         />
                         <Area
