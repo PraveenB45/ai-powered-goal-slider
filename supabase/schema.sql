@@ -47,8 +47,11 @@ CREATE TABLE IF NOT EXISTS student_progress (
   student_id UUID REFERENCES students(id) ON DELETE CASCADE,
   topic_id TEXT REFERENCES topics(id) ON DELETE CASCADE,
   videos_done BOOLEAN DEFAULT FALSE,
+  videos_completed_at TIMESTAMPTZ,
   pyqs_done BOOLEAN DEFAULT FALSE,
+  pyqs_completed_at TIMESTAMPTZ,
   practice_done BOOLEAN DEFAULT FALSE,
+  practice_completed_at TIMESTAMPTZ,
   study_seconds INT DEFAULT 0,
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(student_id, topic_id)

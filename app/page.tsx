@@ -13,6 +13,7 @@ import {
 } from 'recharts'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import ProgressDashboard from '@/components/ProgressDashboard'
 
 // 1. Dataset for Government Exams & Placement Drives
 interface Topic {
@@ -236,6 +237,7 @@ export default function Home() {
   const [studyTimer, setStudyTimer] = useState(0)
   const [isTimerRunning, setIsTimerRunning] = useState(false)
   const [completedTasks, setCompletedTasks] = useState<Record<string, boolean>>({})
+  const [taskCompletionDates, setTaskCompletionDates] = useState<Record<string, string>>({})
 
   // Use DB topics if loaded, otherwise fallback
   const defaultTopics = dbLoaded && topicsFromDB.length > 0 ? topicsFromDB : fallbackTopics
@@ -341,17 +343,19 @@ export default function Home() {
       try {
         const { data } = await supabase
           .from('student_progress')
-          .select('topic_id, videos_done, pyqs_done, practice_done')
+          .select('topic_id, videos_done, pyqs_done, practice_done, videos_completed_at, pyqs_completed_at, practice_completed_at')
           .eq('student_id', user.id)
 
         if (data && data.length > 0) {
           const tasks: Record<string, boolean> = {}
+          const dates: Record<string, string> = {}
           data.forEach((row: any) => {
-            if (row.videos_done) tasks[`${row.topic_id}-vid`] = true
-            if (row.pyqs_done) tasks[`${row.topic_id}-pyq`] = true
-            if (row.practice_done) tasks[`${row.topic_id}-practice`] = true
+            if (row.videos_done) { tasks[`${row.topic_id}-vid`] = true; if (row.videos_completed_at) dates[`${row.topic_id}-vid`] = row.videos_completed_at }
+            if (row.pyqs_done) { tasks[`${row.topic_id}-pyq`] = true; if (row.pyqs_completed_at) dates[`${row.topic_id}-pyq`] = row.pyqs_completed_at }
+            if (row.practice_done) { tasks[`${row.topic_id}-practice`] = true; if (row.practice_completed_at) dates[`${row.topic_id}-practice`] = row.practice_completed_at }
           })
           setCompletedTasks(tasks)
+          setTaskCompletionDates(dates)
         }
       } catch {
         // Ignore — use local state
@@ -367,12 +371,16 @@ export default function Home() {
     if (!user) return
     try {
       const column = taskType === 'vid' ? 'videos_done' : taskType === 'pyq' ? 'pyqs_done' : 'practice_done'
+      const dateColumn = taskType === 'vid' ? 'videos_completed_at' : taskType === 'pyq' ? 'pyqs_completed_at' : 'practice_completed_at'
+      const timestamp = isDone ? new Date().toISOString() : null
+      
       await supabase
         .from('student_progress')
         .upsert({
           student_id: user.id,
           topic_id: topicId,
           [column]: isDone,
+          [dateColumn]: timestamp,
           updated_at: new Date().toISOString()
         }, { onConflict: 'student_id,topic_id' })
     } catch {
@@ -591,6 +599,18 @@ export default function Home() {
   const toggleTask = (taskId: string) => {
     const newValue = !completedTasks[taskId]
     setCompletedTasks((prev) => ({ ...prev, [taskId]: newValue }))
+    
+    // Also update local dates immediately for UI responsiveness
+    setTaskCompletionDates((prev) => {
+      const newDates = { ...prev }
+      if (newValue) {
+        newDates[taskId] = new Date().toISOString()
+      } else {
+        delete newDates[taskId]
+      }
+      return newDates
+    })
+
     // Parse topicId and taskType from the composite key (e.g. "t1-vid")
     const parts = taskId.split('-')
     const taskType = parts.pop() || ''
@@ -1266,156 +1286,28 @@ export default function Home() {
 
             </motion.div>
           ) : (
-            
             // SIMULATED GUIDED STUDY ENVIRONMENT
-            <motion.div
-              key="guided-study"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="glass-panel rounded-[32px] p-6 sm:p-8 border border-white/5 space-y-8 relative overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
-
-              {/* Study Header */}
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-white/10 pb-6">
-                <div>
-                  <button
-                    onClick={() => {
-                      setIsLearningActive(false)
-                      setIsTimerRunning(false)
-                    }}
-                    className="inline-flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-white transition-colors mb-3 bg-slate-900 border border-white/5 rounded-full px-3.5 py-1.5"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-                    Leave Study Session
-                  </button>
-                  <h2 className="text-3xl font-black text-white">Active Preparation Suite</h2>
-                  <p className="text-xs text-slate-400 mt-1">Simulating guided study path execution</p>
-                </div>
-
-                {/* Session Timer & Progress Widget */}
-                <div className="flex items-center gap-4 bg-slate-900/90 rounded-2xl p-4 border border-white/10">
-                  <div className="text-right">
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Session Time</p>
-                    <p className="text-2xl font-mono font-black text-emerald-400 mt-0.5">{formatTimer(studyTimer)}</p>
-                  </div>
-                  <button
-                    onClick={() => setIsTimerRunning(!isTimerRunning)}
-                    className={`p-2.5 rounded-full ${
-                      isTimerRunning ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'
-                    }`}
-                  >
-                    {isTimerRunning ? (
-                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-                    ) : (
-                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clipRule="evenodd" /></svg>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Progress Summary Cards */}
-              <div className="grid gap-6 sm:grid-cols-3">
-                <div className="bg-slate-900/50 rounded-2xl p-5 border border-white/5">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Completion Rate</span>
-                  <p className="text-4xl font-black mt-2 text-emerald-400">{learningProgress}%</p>
-                  <div className="w-full bg-slate-800 rounded-full h-2 mt-3 overflow-hidden">
-                    <div className="bg-emerald-500 h-2 transition-all duration-300" style={{ width: `${learningProgress}%` }} />
-                  </div>
-                </div>
-                <div className="bg-slate-900/50 rounded-2xl p-5 border border-white/5">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Estimated Score Boost</span>
-                  <p className="text-4xl font-black mt-2 text-orange-400">+{Math.round(learningProgress * (stats.marksPercent / 100))}%</p>
-                  <p className="text-xs text-slate-400 mt-2">Correlated with completed modules</p>
-                </div>
-                <div className="bg-slate-900/50 rounded-2xl p-5 border border-white/5">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Modules Remaining</span>
-                  <p className="text-4xl font-black mt-2 text-blue-400">
-                    {selectedTopics.length - Math.floor((learningProgress / 100) * selectedTopics.length)}
-                  </p>
-                  <p className="text-xs text-slate-400 mt-2">Active targets in preparation list</p>
-                </div>
-              </div>
-
-              {/* Modules Workspace */}
-              <div className="space-y-4">
-                <h3 className="text-xl font-bold">Topic-by-Topic Syllabus Roadmap</h3>
-                <div className="grid gap-4 md:grid-cols-2">
-                  {selectedTopics.map((topic) => (
-                    <div key={topic.id} className="bg-slate-900/80 rounded-2xl p-5 border border-white/10 space-y-4">
-                      <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                        <div>
-                          <span className="text-xxs font-bold text-indigo-400 uppercase tracking-wider bg-indigo-500/10 rounded px-2 py-0.5">
-                            {topic.category}
-                          </span>
-                          <h4 className="text-base font-bold text-slate-200 mt-1">{topic.name}</h4>
-                        </div>
-                        <span className="text-xs font-bold text-slate-400">{topic.studyMinutes}m preparation</span>
-                      </div>
-
-                      {/* Video / PYQ / MCQ checklists */}
-                      <div className="space-y-2.5">
-                        {/* Concept Videos task */}
-                        <div
-                          onClick={() => toggleTask(`${topic.id}-vid`)}
-                          className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer hover:bg-slate-950 transition-colors"
-                        >
-                          <span className="text-xs text-slate-300 flex items-center gap-2">
-                            <span className="p-1 rounded bg-blue-500/10 text-blue-400">📹</span>
-                            Watch {topic.videos} Core Concept Videos
-                          </span>
-                          <div className={`w-5 h-5 rounded border flex items-center justify-center ${
-                            completedTasks[`${topic.id}-vid`] ? 'bg-emerald-500 border-emerald-400 text-white' : 'border-slate-700'
-                          }`}>
-                            {completedTasks[`${topic.id}-vid`] && (
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* PYQ Checklist task */}
-                        <div
-                          onClick={() => toggleTask(`${topic.id}-pyq`)}
-                          className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer hover:bg-slate-950 transition-colors"
-                        >
-                          <span className="text-xs text-slate-300 flex items-center gap-2">
-                            <span className="p-1 rounded bg-orange-500/10 text-orange-400">📝</span>
-                            Solve {topic.pyqs} Previous Year Questions
-                          </span>
-                          <div className={`w-5 h-5 rounded border flex items-center justify-center ${
-                            completedTasks[`${topic.id}-pyq`] ? 'bg-emerald-500 border-emerald-400 text-white' : 'border-slate-700'
-                          }`}>
-                            {completedTasks[`${topic.id}-pyq`] && (
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Practice Checklist task */}
-                        <div
-                          onClick={() => toggleTask(`${topic.id}-practice`)}
-                          className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/40 border border-white/5 cursor-pointer hover:bg-slate-950 transition-colors"
-                        >
-                          <span className="text-xs text-slate-300 flex items-center gap-2">
-                            <span className="p-1 rounded bg-pink-500/10 text-pink-400">🧠</span>
-                            Complete {topic.practice} MCQ Exercises
-                          </span>
-                          <div className={`w-5 h-5 rounded border flex items-center justify-center ${
-                            completedTasks[`${topic.id}-practice`] ? 'bg-emerald-500 border-emerald-400 text-white' : 'border-slate-700'
-                          }`}>
-                            {completedTasks[`${topic.id}-practice`] && (
-                              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7" /></svg>
-                            )}
-                          </div>
-                        </div>
-
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
+            <ProgressDashboard
+              user={user}
+              studentName={studentName}
+              selectedTopics={selectedTopics}
+              completedTasks={completedTasks}
+              taskCompletionDates={taskCompletionDates}
+              toggleTask={toggleTask}
+              formatTimer={formatTimer}
+              studyTimer={studyTimer}
+              isTimerRunning={isTimerRunning}
+              setIsTimerRunning={setIsTimerRunning}
+              handleLeaveSession={() => {
+                setIsLearningActive(false)
+                setIsTimerRunning(false)
+              }}
+              learningProgress={learningProgress}
+              stats={stats}
+              examProfile={examProfile}
+              setCompletedTasks={setCompletedTasks}
+              setTaskCompletionDates={setTaskCompletionDates}
+            />
           )}
         </AnimatePresence>
 
