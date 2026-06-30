@@ -224,9 +224,7 @@ export default function AuthPage() {
           </p>
         </div>
 
-        <p className="text-center text-xs text-slate-600 mt-4">
-          Your data is securely stored with Supabase 🔒
-        </p>
+        {/* Footer text removed */}
       </motion.div>
     </main>
   )
