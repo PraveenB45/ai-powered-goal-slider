@@ -41,10 +41,24 @@ CREATE TABLE IF NOT EXISTS student_weakness (
   UNIQUE(student_id, topic_id)
 );
 
--- 4. Student Progress Table (tracks task completion)
+-- 4. Study Plans Table (tracks saved AI roadmaps)
+CREATE TABLE IF NOT EXISTS study_plans (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  student_id UUID REFERENCES students(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  target_score INTEGER NOT NULL,
+  available_time INTEGER NOT NULL,
+  exam_profile TEXT NOT NULL,
+  selected_topics JSONB NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 5. Student Progress Table (tracks task completion per plan)
 CREATE TABLE IF NOT EXISTS student_progress (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   student_id UUID REFERENCES students(id) ON DELETE CASCADE,
+  plan_id UUID REFERENCES study_plans(id) ON DELETE CASCADE,
   topic_id TEXT REFERENCES topics(id) ON DELETE CASCADE,
   videos_done BOOLEAN DEFAULT FALSE,
   videos_completed_at TIMESTAMPTZ,
@@ -54,7 +68,7 @@ CREATE TABLE IF NOT EXISTS student_progress (
   practice_completed_at TIMESTAMPTZ,
   study_seconds INT DEFAULT 0,
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(student_id, topic_id)
+  UNIQUE(plan_id, topic_id)
 );
 
 -- =============================================
@@ -72,6 +86,24 @@ CREATE POLICY "Students: own data only" ON students
 CREATE POLICY "Weakness: own data only" ON student_weakness
   FOR ALL USING (auth.uid() = student_id);
 
+-- Policies for study_plans
+CREATE POLICY "Students can view their own study plans."
+  ON study_plans FOR SELECT
+  USING ( auth.uid() = student_id );
+
+CREATE POLICY "Students can insert their own study plans."
+  ON study_plans FOR INSERT
+  WITH CHECK ( auth.uid() = student_id );
+
+CREATE POLICY "Students can update their own study plans."
+  ON study_plans FOR UPDATE
+  USING ( auth.uid() = student_id );
+
+CREATE POLICY "Students can delete their own study plans."
+  ON study_plans FOR DELETE
+  USING ( auth.uid() = student_id );
+
+-- Policies for student_progress
 CREATE POLICY "Progress: own data only" ON student_progress
   FOR ALL USING (auth.uid() = student_id);
 

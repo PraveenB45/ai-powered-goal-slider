@@ -7,8 +7,9 @@ import { useRouter } from 'next/navigation'
 
 export default function AuthPage() {
   const router = useRouter()
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
+  const [mode, setMode] = useState<'login' | 'signup' | 'reset'>('login')
   const [name, setName] = useState('')
+  const [rememberMe, setRememberMe] = useState(true)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -31,10 +32,16 @@ export default function AuthPage() {
         if (error) throw error
         setSuccess('Account created! Please check your email to verify your account, then log in.')
         setMode('login')
+      } else if (mode === 'reset') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/auth/update-password`,
+        })
+        if (error) throw error
+        setSuccess('Password reset link sent! Check your email.')
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
-        router.push('/')
+        router.push('/dashboard')
         router.refresh()
       }
     } catch (err: any) {
@@ -90,6 +97,18 @@ export default function AuthPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <AnimatePresence>
+              {mode === 'reset' && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-xl mb-4"
+                >
+                  <p className="text-xs text-blue-300">Enter your email address and we will send you a password reset link.</p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <AnimatePresence>
               {mode === 'signup' && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
@@ -121,18 +140,47 @@ export default function AuthPage() {
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                minLength={6}
-                className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none"
-              />
-            </div>
+            <AnimatePresence>
+              {mode !== 'reset' && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                >
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Password</label>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    minLength={6}
+                    className="w-full glass-input rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 focus:outline-none"
+                  />
+                  
+                  {mode === 'login' && (
+                    <div className="flex items-center justify-between mt-3">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input 
+                          type="checkbox" 
+                          checked={rememberMe}
+                          onChange={(e) => setRememberMe(e.target.checked)}
+                          className="w-3.5 h-3.5 rounded border-slate-600 bg-slate-900 focus:ring-blue-500 focus:ring-2 text-blue-500" 
+                        />
+                        <span className="text-xs text-slate-400 font-medium">Remember me</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => { setMode('reset'); setError(''); setSuccess('') }}
+                        className="text-xs text-blue-400 hover:text-blue-300 font-bold transition-colors"
+                      >
+                        Forgot password?
+                      </button>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             {error && (
               <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-xs text-red-300">
@@ -157,21 +205,21 @@ export default function AuthPage() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                   </svg>
-                  {mode === 'login' ? 'Signing in...' : 'Creating account...'}
+                  {mode === 'login' ? 'Signing in...' : mode === 'reset' ? 'Sending link...' : 'Creating account...'}
                 </>
               ) : (
-                mode === 'login' ? 'Sign In to Dashboard' : 'Create Free Account'
+                mode === 'login' ? 'Sign In to Dashboard' : mode === 'reset' ? 'Send Reset Link' : 'Create Free Account'
               )}
             </button>
           </form>
 
           <p className="text-center text-xs text-slate-500 mt-4">
-            {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
+            {mode === 'login' ? "Don't have an account? " : mode === 'reset' ? 'Remember your password? ' : 'Already have an account? '}
             <button
-              onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setSuccess('') }}
+              onClick={() => { setMode(mode === 'login' || mode === 'reset' ? 'signup' : 'login'); setError(''); setSuccess('') }}
               className="text-blue-400 hover:text-blue-300 font-bold"
             >
-              {mode === 'login' ? 'Sign up free' : 'Sign in'}
+              {mode === 'login' || mode === 'reset' ? 'Sign up free' : 'Sign in'}
             </button>
           </p>
         </div>

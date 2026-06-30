@@ -39,6 +39,7 @@ interface ProgressDashboardProps {
   examProfile: 'govt' | 'placement'
   setCompletedTasks: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
   setTaskCompletionDates: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  activePlanId: string | null
 }
 
 export default function ProgressDashboard({
@@ -57,7 +58,8 @@ export default function ProgressDashboard({
   stats,
   examProfile,
   setCompletedTasks,
-  setTaskCompletionDates
+  setTaskCompletionDates,
+  activePlanId
 }: ProgressDashboardProps) {
   const [showResetConfirm, setShowResetConfirm] = useState(false)
 
@@ -184,11 +186,13 @@ export default function ProgressDashboard({
       setTaskCompletionDates({})
       setShowResetConfirm(false)
       
-      // Delete all progress for this user in DB
-      await supabase
-        .from('student_progress')
-        .delete()
-        .eq('student_id', user.id)
+      if (activePlanId) {
+        // Delete all progress for this active plan in DB
+        await supabase
+          .from('student_progress')
+          .delete()
+          .eq('plan_id', activePlanId)
+      }
     } catch (err) {
       console.error(err)
     }

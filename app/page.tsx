@@ -14,6 +14,8 @@ import {
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import ProgressDashboard from '@/components/ProgressDashboard'
+import Navbar from '@/components/Navbar'
+import Link from 'next/link'
 
 // 1. Dataset for Government Exams & Placement Drives
 interface Topic {
@@ -238,6 +240,10 @@ export default function Home() {
   const [isTimerRunning, setIsTimerRunning] = useState(false)
   const [completedTasks, setCompletedTasks] = useState<Record<string, boolean>>({})
   const [taskCompletionDates, setTaskCompletionDates] = useState<Record<string, string>>({})
+  
+  // Active Plan tracking
+  const [activePlanId, setActivePlanId] = useState<string | null>(null)
+  const [isSavingPlan, setIsSavingPlan] = useState(false)
 
   // Use DB topics if loaded, otherwise fallback
   const defaultTopics = dbLoaded && topicsFromDB.length > 0 ? topicsFromDB : fallbackTopics
@@ -268,8 +274,34 @@ export default function Home() {
       }
     })
 
+    // Load Plan from URL if present
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const planId = params.get('planId')
+      if (planId) {
+        setActivePlanId(planId)
+        loadPlanDetails(planId)
+      }
+    }
+
     return () => subscription.unsubscribe()
   }, [])
+
+  const loadPlanDetails = async (planId: string) => {
+    try {
+      const { data } = await supabase.from('study_plans').select('*').eq('id', planId).single()
+      if (data) {
+        setGoalPercent(data.target_score)
+        setExamProfile(data.exam_profile)
+        // If manual overrides were saved, we'd restore them here. We'll add it to the save logic below.
+        if (data.selected_topics && data.selected_topics.manualOverrides) {
+          setManualOverrides(data.selected_topics.manualOverrides)
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load plan', e)
+    }
+  }
 
   // =============================================
   // DB: Fetch topics from Supabase
@@ -338,13 +370,13 @@ export default function Home() {
   // DB: Load student progress (completed tasks) from Supabase
   // =============================================
   useEffect(() => {
-    if (!user) return
+    if (!user || !activePlanId) return
     const fetchProgress = async () => {
       try {
         const { data } = await supabase
           .from('student_progress')
           .select('topic_id, videos_done, pyqs_done, practice_done, videos_completed_at, pyqs_completed_at, practice_completed_at')
-          .eq('student_id', user.id)
+          .eq('plan_id', activePlanId)
 
         if (data && data.length > 0) {
           const tasks: Record<string, boolean> = {}
@@ -356,19 +388,22 @@ export default function Home() {
           })
           setCompletedTasks(tasks)
           setTaskCompletionDates(dates)
+        } else {
+          setCompletedTasks({})
+          setTaskCompletionDates({})
         }
       } catch {
         // Ignore — use local state
       }
     }
     fetchProgress()
-  }, [user])
+  }, [user, activePlanId])
 
   // =============================================
   // DB: Save progress when tasks are toggled
   // =============================================
   const saveProgress = useCallback(async (topicId: string, taskType: string, isDone: boolean) => {
-    if (!user) return
+    if (!user || !activePlanId) return
     try {
       const column = taskType === 'vid' ? 'videos_done' : taskType === 'pyq' ? 'pyqs_done' : 'practice_done'
       const dateColumn = taskType === 'vid' ? 'videos_completed_at' : taskType === 'pyq' ? 'pyqs_completed_at' : 'practice_completed_at'
@@ -378,15 +413,54 @@ export default function Home() {
         .from('student_progress')
         .upsert({
           student_id: user.id,
+          plan_id: activePlanId,
           topic_id: topicId,
           [column]: isDone,
           [dateColumn]: timestamp,
           updated_at: new Date().toISOString()
-        }, { onConflict: 'student_id,topic_id' })
+        }, { onConflict: 'plan_id,topic_id' })
+        
+      // Also update the study plan's updated_at timestamp
+      await supabase.from('study_plans').update({ updated_at: new Date().toISOString() }).eq('id', activePlanId)
     } catch {
       // Ignore — local state still works
     }
-  }, [user])
+  }, [user, activePlanId])
+
+  const handleSavePlan = async () => {
+    if (!user) {
+      router.push('/auth')
+      return
+    }
+    const title = prompt('Enter a name for this Study Plan:', `${examProfile.toUpperCase()} Target ${goalPercent}%`)
+    if (!title) return
+    
+    setIsSavingPlan(true)
+    try {
+      // Save to Supabase
+      const { data, error } = await supabase.from('study_plans').insert({
+        student_id: user.id,
+        title,
+        target_score: goalPercent,
+        available_time: selectedTopics.reduce((acc, t) => acc + t.studyMinutes, 0),
+        exam_profile: examProfile,
+        selected_topics: { manualOverrides } // Storing overrides so we can accurately restore the exact plan
+      }).select('id').single()
+      
+      if (error) throw error
+      if (data) {
+        setActivePlanId(data.id)
+        alert('Plan saved successfully! You can access it anytime from "My Plans".')
+        // Automatically start the simulator
+        setIsLearningActive(true)
+        setIsTimerRunning(true)
+      }
+    } catch (err: any) {
+      alert('Error saving plan: ' + err.message)
+    } finally {
+      setIsSavingPlan(false)
+    }
+  }
 
   // =============================================
   // Auth: Logout handler
@@ -683,10 +757,11 @@ export default function Home() {
             </span>
           </div>
 
-          {/* User Profile & Auth buttons */}
           {user ? (
-            <div className="flex items-center gap-2">
-              <div className="hidden sm:block text-right">
+            <div className="flex items-center gap-4 border-l border-white/10 pl-4">
+              <Link href="/dashboard" className="text-sm font-bold text-slate-300 hover:text-white transition-colors">Dashboard</Link>
+              <Link href="/plans" className="text-sm font-bold text-slate-300 hover:text-white transition-colors">My Plans</Link>
+              <div className="hidden sm:block text-right ml-2">
                 <p className="text-xs font-bold text-slate-200">{studentName}</p>
                 <p className="text-[10px] text-slate-400">{user.email}</p>
               </div>
@@ -701,7 +776,7 @@ export default function Home() {
           ) : (
             <button
               onClick={() => router.push('/auth')}
-              className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-all"
+              className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-all ml-4"
             >
               Sign In
             </button>
@@ -1269,18 +1344,43 @@ export default function Home() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-3 w-full md:w-auto z-10">
-                  <button
-                    onClick={() => {
-                      setIsLearningActive(true)
-                      setIsTimerRunning(true)
-                    }}
-                    className="px-8 py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold tracking-wide shadow-xl shadow-blue-500/25 flex items-center justify-center gap-2 group transition-all"
-                  >
-                    Start Learning
-                    <svg className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-                    </svg>
-                  </button>
+                  {activePlanId ? (
+                    <button
+                      onClick={() => {
+                        setIsLearningActive(true)
+                        setIsTimerRunning(true)
+                      }}
+                      className="px-8 py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold tracking-wide shadow-xl shadow-emerald-500/25 flex items-center justify-center gap-2 group transition-all"
+                    >
+                      Continue Learning
+                      <svg className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                      </svg>
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={handleSavePlan}
+                        disabled={isSavingPlan}
+                        className="px-8 py-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-white font-bold tracking-wide border border-white/10 flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                      >
+                        {isSavingPlan ? 'Saving...' : 'Save Study Plan'}
+                        <svg className="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsLearningActive(true)
+                          setIsTimerRunning(true)
+                        }}
+                        className="px-8 py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold tracking-wide shadow-xl shadow-blue-500/25 flex items-center justify-center gap-2 group transition-all"
+                      >
+                        Start Learning Without Saving
+                        <svg className="w-5 h-5 transform group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
+                        </svg>
+                      </button>
+                    </>
+                  )}
                 </div>
               </section>
 
@@ -1307,6 +1407,7 @@ export default function Home() {
               examProfile={examProfile}
               setCompletedTasks={setCompletedTasks}
               setTaskCompletionDates={setTaskCompletionDates}
+              activePlanId={activePlanId}
             />
           )}
         </AnimatePresence>
