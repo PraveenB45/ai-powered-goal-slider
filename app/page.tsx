@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Area,
@@ -11,27 +11,29 @@ import {
   XAxis,
   YAxis
 } from 'recharts'
+import { supabase } from '@/lib/supabase'
+import { useRouter } from 'next/navigation'
 
 // 1. Dataset for Government Exams & Placement Drives
 interface Topic {
   id: string
   name: string
   category: string
-  // Default values
-  pyqFrequency: number // 1-10 scale
-  marksWeightageGovt: number // Marks in Govt exam (out of 100)
-  marksWeightagePlacement: number // Marks in Placement exam (out of 100)
-  difficulty: number // 1-10 scale (10 is hardest)
-  studentWeakness: number // 1-10 scale (10 is weakest area)
-  videos: number // Count
-  pyqs: number // PYQs available
-  practice: number // Practice questions available
-  notes: number // Notes pages
-  studyMinutes: number // Estimated prep time
-  syllabusWeight: number // Percentage of total syllabus
+  pyqFrequency: number
+  marksWeightageGovt: number
+  marksWeightagePlacement: number
+  difficulty: number
+  studentWeakness: number
+  videos: number
+  pyqs: number
+  practice: number
+  notes: number
+  studyMinutes: number
+  syllabusWeight: number
 }
 
-const defaultTopics: Topic[] = [
+// Fallback data used when Supabase is unavailable or topics table is empty
+const fallbackTopics: Topic[] = [
   {
     id: 't1',
     name: 'Quantitative Aptitude: Percentages & Interest',
@@ -150,7 +152,7 @@ const defaultTopics: Topic[] = [
     category: 'Technical Core',
     pyqFrequency: 8,
     marksWeightageGovt: 2,
-    marksWeightagePlacement: 22, // Crucial for Placements
+    marksWeightagePlacement: 22,
     difficulty: 7,
     studentWeakness: 8,
     videos: 9,
@@ -181,7 +183,7 @@ const defaultTopics: Topic[] = [
     name: 'General Awareness: Economy & Current Affairs',
     category: 'General Knowledge',
     pyqFrequency: 9,
-    marksWeightageGovt: 10, // Crucial for Govt exams
+    marksWeightageGovt: 10,
     marksWeightagePlacement: 2,
     difficulty: 5,
     studentWeakness: 6,
@@ -198,6 +200,17 @@ type ExamProfile = 'govt' | 'placement'
 type FilterKey = 'pyq' | 'weightage' | 'easy' | 'difficult' | 'weak' | 'ai_balanced'
 
 export default function Home() {
+  const router = useRouter()
+
+  // Auth State
+  const [user, setUser] = useState<any>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [studentName, setStudentName] = useState('')
+
+  // Data from DB
+  const [topicsFromDB, setTopicsFromDB] = useState<Topic[]>([])
+  const [dbLoaded, setDbLoaded] = useState(false)
+
   // Theme State
   const [isDarkMode, setIsDarkMode] = useState(true)
 
@@ -208,11 +221,11 @@ export default function Home() {
   const [activeFilter, setActiveFilter] = useState<FilterKey>('ai_balanced')
   const [weightPYQ, setWeightPYQ] = useState(0.4)
   const [weightWeightage, setWeightWeightage] = useState(0.3)
-  const [weightDifficulty, setWeightDifficulty] = useState(0.1) // Easy is prioritized by default in AI recommendation
+  const [weightDifficulty, setWeightDifficulty] = useState(0.1)
   const [weightWeakness, setWeightWeakness] = useState(0.2)
 
-  // Goal Slider Value (representing target Marks Achievement percentage)
-  const [goalPercent, setGoalPercent] = useState(60) // Default to 60% (Common passing score)
+  // Goal Slider Value
+  const [goalPercent, setGoalPercent] = useState(60)
 
   // Manual Overrides (Fine-tuning)
   const [manualOverrides, setManualOverrides] = useState<Record<string, boolean>>({})
@@ -223,6 +236,159 @@ export default function Home() {
   const [studyTimer, setStudyTimer] = useState(0)
   const [isTimerRunning, setIsTimerRunning] = useState(false)
   const [completedTasks, setCompletedTasks] = useState<Record<string, boolean>>({})
+
+  // Use DB topics if loaded, otherwise fallback
+  const defaultTopics = dbLoaded && topicsFromDB.length > 0 ? topicsFromDB : fallbackTopics
+
+  // =============================================
+  // Auth: Check session on mount
+  // =============================================
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        setUser(session?.user ?? null)
+        if (session?.user) {
+          setStudentName(session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Student')
+        }
+      } catch {
+        // Supabase unreachable — allow offline usage
+        setUser(null)
+      }
+      setAuthLoading(false)
+    }
+    checkAuth()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+      if (session?.user) {
+        setStudentName(session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Student')
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  // =============================================
+  // DB: Fetch topics from Supabase
+  // =============================================
+  useEffect(() => {
+    const fetchTopics = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('topics')
+          .select('*')
+          .order('id')
+
+        if (!error && data && data.length > 0) {
+          const mapped: Topic[] = data.map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            category: t.category,
+            pyqFrequency: t.pyq_frequency,
+            marksWeightageGovt: t.marks_weightage_govt,
+            marksWeightagePlacement: t.marks_weightage_placement,
+            difficulty: t.difficulty,
+            studentWeakness: 5, // Will be overwritten by student-specific weakness
+            videos: t.videos,
+            pyqs: t.pyqs,
+            practice: t.practice,
+            notes: t.notes,
+            studyMinutes: t.study_minutes,
+            syllabusWeight: t.syllabus_weight
+          }))
+          setTopicsFromDB(mapped)
+        }
+      } catch {
+        // Supabase unavailable — fallback topics are used
+      }
+      setDbLoaded(true)
+    }
+    fetchTopics()
+  }, [])
+
+  // =============================================
+  // DB: Load student weakness scores from Supabase
+  // =============================================
+  useEffect(() => {
+    if (!user || topicsFromDB.length === 0) return
+    const fetchWeakness = async () => {
+      try {
+        const { data } = await supabase
+          .from('student_weakness')
+          .select('topic_id, weakness_score')
+          .eq('student_id', user.id)
+
+        if (data && data.length > 0) {
+          setTopicsFromDB(prev => prev.map(t => {
+            const found = data.find((w: any) => w.topic_id === t.id)
+            return found ? { ...t, studentWeakness: found.weakness_score } : t
+          }))
+        }
+      } catch {
+        // Ignore — use default weakness
+      }
+    }
+    fetchWeakness()
+  }, [user, dbLoaded])
+
+  // =============================================
+  // DB: Load student progress (completed tasks) from Supabase
+  // =============================================
+  useEffect(() => {
+    if (!user) return
+    const fetchProgress = async () => {
+      try {
+        const { data } = await supabase
+          .from('student_progress')
+          .select('topic_id, videos_done, pyqs_done, practice_done')
+          .eq('student_id', user.id)
+
+        if (data && data.length > 0) {
+          const tasks: Record<string, boolean> = {}
+          data.forEach((row: any) => {
+            if (row.videos_done) tasks[`${row.topic_id}-vid`] = true
+            if (row.pyqs_done) tasks[`${row.topic_id}-pyq`] = true
+            if (row.practice_done) tasks[`${row.topic_id}-practice`] = true
+          })
+          setCompletedTasks(tasks)
+        }
+      } catch {
+        // Ignore — use local state
+      }
+    }
+    fetchProgress()
+  }, [user])
+
+  // =============================================
+  // DB: Save progress when tasks are toggled
+  // =============================================
+  const saveProgress = useCallback(async (topicId: string, taskType: string, isDone: boolean) => {
+    if (!user) return
+    try {
+      const column = taskType === 'vid' ? 'videos_done' : taskType === 'pyq' ? 'pyqs_done' : 'practice_done'
+      await supabase
+        .from('student_progress')
+        .upsert({
+          student_id: user.id,
+          topic_id: topicId,
+          [column]: isDone,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'student_id,topic_id' })
+    } catch {
+      // Ignore — local state still works
+    }
+  }, [user])
+
+  // =============================================
+  // Auth: Logout handler
+  // =============================================
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    setUser(null)
+    setCompletedTasks({})
+    router.push('/auth')
+  }
 
   // Apply dark mode class on html tag
   useEffect(() => {
@@ -423,7 +589,13 @@ export default function Home() {
   }
 
   const toggleTask = (taskId: string) => {
-    setCompletedTasks((prev) => ({ ...prev, [taskId]: !prev[taskId] }))
+    const newValue = !completedTasks[taskId]
+    setCompletedTasks((prev) => ({ ...prev, [taskId]: newValue }))
+    // Parse topicId and taskType from the composite key (e.g. "t1-vid")
+    const parts = taskId.split('-')
+    const taskType = parts.pop() || ''
+    const topicId = parts.join('-')
+    saveProgress(topicId, taskType, newValue)
   }
 
   // Calculate learning progress percentage
@@ -433,6 +605,20 @@ export default function Home() {
     const completedCount = Object.values(completedTasks).filter(Boolean).length
     return Math.round((completedCount / totalTasks) * 100)
   }, [selectedTopics, completedTasks])
+
+  // Auth loading screen
+  if (authLoading) {
+    return (
+      <main className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-500 to-orange-500 flex items-center justify-center font-black text-white text-2xl shadow-2xl mx-auto pulse-glow">
+            G
+          </div>
+          <p className="text-slate-400 text-sm animate-pulse">Loading GoalSlider AI...</p>
+        </div>
+      </main>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 transition-colors duration-300 relative text-slate-100 dark:text-slate-100">
@@ -452,7 +638,7 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {/* Light/Dark mode switcher */}
           <button
             onClick={() => setIsDarkMode(!isDarkMode)}
@@ -476,6 +662,30 @@ export default function Home() {
               Mode: {examProfile === 'govt' ? 'Govt Exams (SSC/Bank)' : 'Placement Drives'}
             </span>
           </div>
+
+          {/* User Profile & Auth buttons */}
+          {user ? (
+            <div className="flex items-center gap-2">
+              <div className="hidden sm:block text-right">
+                <p className="text-xs font-bold text-slate-200">{studentName}</p>
+                <p className="text-[10px] text-slate-400">{user.email}</p>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-bold hover:bg-red-500/20 transition-all"
+                title="Sign out"
+              >
+                Logout
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => router.push('/auth')}
+              className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition-all"
+            >
+              Sign In
+            </button>
+          )}
         </div>
       </header>
 
