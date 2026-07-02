@@ -450,10 +450,8 @@ export default function Home() {
       if (error) throw error
       if (data) {
         setActivePlanId(data.id)
-        alert('Plan saved successfully! You can access it anytime from "My Plans".')
-        // Automatically start the simulator
-        setIsLearningActive(true)
-        setIsTimerRunning(true)
+        // Redirect to the AI Study Dashboard as the central hub
+        router.push('/dashboard')
       }
     } catch (err: any) {
       alert('Error saving plan: ' + err.message)
@@ -461,6 +459,7 @@ export default function Home() {
       setIsSavingPlan(false)
     }
   }
+
 
   // =============================================
   // Auth: Logout handler
